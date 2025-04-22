@@ -1,6 +1,5 @@
 import random
 from collections import Counter
-from concurrent.futures import ProcessPoolExecutor
 
 from tqdm import tqdm
 
@@ -70,6 +69,18 @@ SBOX = [
 
 # fmt: on
 def permute(bits: int, table: list[int], width: int) -> int:
+    """
+    Permutes the bits in the given number according to the given table.
+
+    This function takes a number, and a table of positions, and permutes the bits
+    in the number according to the table. The result is a new number with the bits
+    in the same order as specified in the table.
+
+    :param bits: The number to permute.
+    :param table: The table of positions to permute the bits.
+    :param width: The width of the number in bits.
+    :return: The permuted number.
+    """
     out = 0
     for pos in table:
         out = (out << 1) | ((bits >> (width - pos)) & 1)
@@ -77,16 +88,45 @@ def permute(bits: int, table: list[int], width: int) -> int:
 
 
 def expand(r32: int) -> int:
+    """
+    Expands a 32-bit right half to 48 bits using the expansion permutation (E).
+
+    This function takes a 32-bit right half `r32` and returns a 48-bit value
+    with the bits permuted according to the expansion permutation (E).
+
+    :param r32: 32-bit right half
+    :return: 48-bit expanded right half
+    """
     return permute(r32, EXP, 32)
 
 
 def sbox_sub(i: int, six_bits: int) -> int:
+    """
+    Substitutes the given 6-bit value into the given S-box and returns the 4-bit result.
+
+    :param i: The index of the S-box to use.
+    :param six_bits: The 6-bit value to substitute.
+    :return: The 4-bit result of the substitution.
+    """
+
     row = ((six_bits & 0b100000) >> 4) | (six_bits & 1)
     col = (six_bits >> 1) & 0b1111
     return SBOX[i][row][col]
 
 
 def f_func(r32: int, k48: int) -> int:
+    """
+    Feistel function for DES.
+
+    This function implements the Feistel function for DES, which takes a 32-bit
+    right half `r32` and a 48-bit round key `k48` and returns a 32-bit result.
+    The function expands the right half to 48 bits, XORs the round key,
+    applies the 8 DES S-boxes in parallel, and permutes the result.
+
+    :param r32: 32-bit right half
+    :param k48: 48-bit round key
+    :return: 32-bit result
+    """
     e = expand(r32) ^ k48
     out = 0
     for i in range(8):
@@ -96,6 +136,14 @@ def f_func(r32: int, k48: int) -> int:
 
 
 def des4_encrypt_block(p64: int, subkeys):
+    """
+    Encrypts a 64-bit plaintext block `p64` using 4 rounds of DES, and returns the
+    ciphertext, as well as the intermediate values `L3` and `R3` after 3 rounds.
+
+    :param p64: 64-bit plaintext block
+    :param subkeys: 4 round keys
+    :return: (ciphertext, L3, R3)
+    """
     ip = permute(p64, IP, 64)
     L, R = ip >> 32, ip & 0xFFFFFFFF
 
@@ -127,6 +175,22 @@ ROT = [1,1,2,2]  # first four rotations
 
 
 def gen_round_keys(key64_hex: str):
+    """
+    Generate the round keys for a 4-round DES encryption.
+
+    This function takes a 64-bit hexadecimal key (parity bits included) and
+    generates a list of 48-bit subkeys, one for each round of encryption.
+    The key is permuted and split into left and right halves, which are
+    rotated according to the ROT schedule. The resulting halves are
+    permuted again to produce each subkey.
+
+    Args:
+        key64_hex (str): A string representing the 64-bit key in hexadecimal format.
+
+    Returns:
+        list[int]: A list of 48-bit integers representing the subkeys for each round.
+    """
+
     key64 = int(key64_hex, 16)
     key56 = permute(key64, PC1, 64)
     c = (key56 >> 28) & 0xFFFFFFF
@@ -147,7 +211,13 @@ PAIR_NUM = 100_000
 
 
 def attack_round4_key(key_hex: str, pairs=PAIR_NUM):
-    print(f"[*] Encrypting {pairs:,} chosen pairs …")
+    """
+    Attack the round 4 key by encrypting `pairs` pairs of plaintexts
+    (P, P ^ DELTA_P) and scoring 6-bit candidates for each S-box.
+
+    Returns a list of 8 best subkey candidates, one for each S-box.
+    """
+    print(f"Encrypting {pairs:,} chosen pairs …")
     subkeys = gen_round_keys(key_hex)
     results = []
 
@@ -157,7 +227,7 @@ def attack_round4_key(key_hex: str, pairs=PAIR_NUM):
         C2, L3b, R3b = des4_encrypt_block(P ^ DELTA_P, subkeys)
         results.append((C1, C2, L3a, R3a, L3b, R3b))
 
-    print("[*] Scoring 6-bit candidates for each S-box …")
+    print("Scoring 6-bit candidates for each S-box …")
     best_subkey = []
     for sbox in range(8):
         counter = Counter()
@@ -188,4 +258,4 @@ if __name__ == "__main__":
         (gen_round_keys(key_hex)[3] >> (42 - 6 * i)) & 0x3F for i in range(8)
     ]
     correct = sum(r == t for r, t in zip(recovered, truth_chunks))
-    print(f"[+] Correct 6-bit chunks: {correct}/8")
+    print(f"Correct 6-bit chunks: {correct}/8")
